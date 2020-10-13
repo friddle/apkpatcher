@@ -1,3 +1,24 @@
+
+## APK Patcher Updater
+为了一些中文环境进行了修改。
+-  添加了参数gadget_abi.解决腾讯加固包找不到lib问题。一般设置为`--gadget_abi armeabi`设置为32位
+-  添加了短信发送权限
+-　解决了中文环境下keytool找不到问题 
+-  apktool添加了`--only-main-classes`参数解决加密加固dex的apktool报错问题。
+
+gadget_abi
+ `apkpatcher -a base.apk --gadget_abi armeabi`
+ 
+完整示范命令
+ `apkpatcher -a du.apk --autoload-script autoload.js -e -o du_output1.apk --gadget_abi armeabi`
+
+错误:
+-　1. java.lang.UnsatisfiedLinkError: "/data/app/xxxx/lib/arm64/libmmkv.so"
+-  2. Exception in thread "main" org.jf.util.ExceptionWithContext: Encountered small uint that is out of range at offset 
+
+
+
+
 ## APK Patcher
 
 This tool was developed mainly to automatically insert Frida Gadget inside APKs, but helps also in other common tasks while reversing Android apps.
