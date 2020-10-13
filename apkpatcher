@@ -57,6 +57,7 @@ class Patcher:
     AUTOLOAD_BIT = 1 << 1
 
     INTERNET_PERMISSION = 'android.permission.INTERNET'
+    SMS_PERMISSION='android.permission.SEND_SMS'
 
     def __init__(self, apk_file_path=None):
         self.apk_file_path = apk_file_path
@@ -124,7 +125,7 @@ class Patcher:
             try:
                 cmd_output = subprocess.check_output(['keytool;echo'], stderr=subprocess.STDOUT, shell=True)
 
-                if b'Key and Certificate' not in cmd_output:
+                if b'Key and Certificate' not in cmd_output and "密钥" not in cmd_output.decode('utf-8'):
                     flag = False
                     self.print_warn('keytool is not installed')
 
@@ -242,14 +243,15 @@ class Patcher:
         if self.VERBOSITY >= self.VERBOSITY_HIGH:
             sys.stdout.write('\n')
 
-    def get_recommended_gadget(self):
+    def get_recommended_gadget(self,abi_version=None):
         ret = None
 
         self.print_info('Trying to identify the right frida-gadget...')
         self.print_info('Waiting for device...')
         os.system('adb wait-for-device')
         abi = subprocess.check_output(['adb', 'shell', 'getprop ro.product.cpu.abi']).decode('utf-8').strip()
-
+        if abi_version is not None:
+            abi=abi_version
         self.print_info('The abi is {0}'.format(abi))
 
         frida_version = subprocess.check_output(['frida', '--version']).strip().decode('utf-8')
@@ -304,10 +306,10 @@ class Patcher:
             self.print_info('Extracting {0} (with resources) to {1}'.format(apk_path, destination_path))
             self.print_info('Some errors may occur while decoding resources that have framework dependencies')
 
-            subprocess.check_output(['apktool', '-f', 'd', '-o', destination_path, apk_path])
+            subprocess.check_output(['apktool', '-f', 'd', '-o', destination_path, apk_path,"--only-main-classes"])
         else:
             self.print_info('Extracting {0} (without resources) to {1}'.format(apk_path, destination_path))
-            subprocess.check_output(['apktool', '-f', '-r', 'd', '-o', destination_path, apk_path])
+            subprocess.check_output(['apktool', '-f', '-r', 'd', '-o', destination_path, apk_path,"--only-main-classes"])
 
     def has_permission(self, apk_path, permission_name):
         permissions = subprocess.check_output(['aapt', 'dump', 'permissions', apk_path]).decode('utf-8')
@@ -743,12 +745,14 @@ class Patcher:
         f.close()
 
     def sign_and_zipalign(self, apk_path):
-        self.print_info('Generating a random key...')
-        subprocess.call(
+        self.print_info('Generating a random key...or use exists key')
+        if not os.path.exists("apkpatcherkeystore"):
+           self.print_info('Generating a random key')
+           subprocess.call(
             'keytool -genkey -keyalg RSA -keysize 2048 -validity 700 -noprompt -alias apkpatcheralias1 -dname '
             '"CN=apk.patcher.com, OU=ID, O=APK, L=Patcher, S=Patch, C=BR" -keystore apkpatcherkeystore '
             '-storepass password -keypass password 2> /dev/null',
-            shell=True)
+              shell=True)
 
         self.print_info('Signing the patched apk...')
         subprocess.call(
@@ -825,6 +829,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-a', '--apk', help='Specify the apk you want to patch')
     parser.add_argument('-g', '--gadget', help='Specify the frida-gadget file')
+    parser.add_argument('--gadget_abi', help='Specify the apk abi type. type(armeabi arm64 x86 x86_64);if set -g/--gadget it will lose')
     parser.add_argument('--autoload-script', help='Auto load script')
     parser.add_argument('-v', '--verbosity', help='Verbosity level (0 to 3). Default is 3')
     parser.add_argument('--update-gadgets', help='Update frida-gadgets', action='store_true')
@@ -880,12 +885,12 @@ def main():
         return 1
 
     gadget_to_use = None
+    gadget_abi=args.gadget_abi
     if not args.prevent_frida_gadget:
         if args.gadget:
             gadget_to_use = args.gadget
-
         else:
-            gadget_to_use = patcher.get_recommended_gadget()
+            gadget_to_use = patcher.get_recommended_gadget(abi_version=gadget_abi)
 
         if gadget_to_use is None or not os.path.isfile(gadget_to_use):
             patcher.print_warn('Could not identify the gadget!')
@@ -898,11 +903,14 @@ def main():
     temporary_path = patcher.create_temp_folder_for_apk(apk_file_path)
 
     has_internet_permission = False
+    has_sms_permission = False
     if not args.prevent_frida_gadget:
         has_internet_permission = patcher.has_permission(apk_file_path, patcher.INTERNET_PERMISSION)
+        has_sms_permission = patcher.has_permission(apk_file_path, patcher.SMS_PERMISSION)
+
 
     # Will extract the resources when needed or when forced
-    if (not args.prevent_frida_gadget and not has_internet_permission) \
+    if (not args.prevent_frida_gadget and not has_internet_permission and not has_sms_permission) \
             or args.enable_user_certificates or args.force_extract_resources:
 
         patcher.extract_apk(apk_file_path, temporary_path, extract_resources=True)
@@ -912,6 +920,9 @@ def main():
 
     if not args.prevent_frida_gadget and not has_internet_permission:
         patcher.inject_permission_manifest(temporary_path, patcher.INTERNET_PERMISSION)
+
+    if not args.prevent_frida_gadget and not has_sms_permission:
+        patcher.inject_permission_manifest(temporary_path, patcher.SMS_PERMISSION)
 
     if args.enable_user_certificates:
         patcher.enable_user_certificates(temporary_path)
